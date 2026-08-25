@@ -4,6 +4,7 @@ import Crest from '../teams/Crest';
 import { getTeam } from '../teams/teamData';
 import { teamCssVars } from '../teams/colorUtils';
 import CountUp from './CountUp';
+import { API_BASE } from '../apiBase';
 
 interface StandingRow {
   team: string;
@@ -18,7 +19,7 @@ export default function Standings() {
   const [filter, setFilter] = useState<'All' | 'East' | 'West'>('All');
 
   useEffect(() => {
-    axios.get('http://localhost:8000/api/standings')
+    axios.get(`${API_BASE}/api/standings`)
       .then(res => {
         setStandings(res.data.data || []);
         setMessage(res.data.message || '');

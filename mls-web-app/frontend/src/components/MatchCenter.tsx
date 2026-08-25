@@ -8,6 +8,7 @@ import CameraRig from '../three/CameraRig';
 import Crest from '../teams/Crest';
 import { getTeam } from '../teams/teamData';
 import { teamCssVars } from '../teams/colorUtils';
+import { API_BASE } from '../apiBase';
 
 type Prediction = { home: number; draw: number; away: number };
 
@@ -27,7 +28,7 @@ export default function MatchCenter() {
   const goalTimeout = useRef<number | null>(null);
 
   useEffect(() => {
-    axios.get('http://localhost:8000/api/teams')
+    axios.get(`${API_BASE}/api/teams`)
       .then(res => setTeams(res.data.teams))
       .catch(err => console.error('Error fetching teams:', err));
   }, []);
@@ -45,7 +46,7 @@ export default function MatchCenter() {
     setMatchDone(false);
     setScore({ home: 0, away: 0 });
     try {
-      const res = await axios.post('http://localhost:8000/api/predict_match', {
+      const res = await axios.post(`${API_BASE}/api/predict_match`, {
         home_team: homeTeam,
         away_team: awayTeam,
       });

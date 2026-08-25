@@ -9,6 +9,7 @@ import Crest from '../teams/Crest';
 import { getTeam } from '../teams/teamData';
 import type { Conference } from '../teams/teamData';
 import { teamCssVars } from '../teams/colorUtils';
+import { API_BASE } from '../apiBase';
 
 interface Seed {
   seed: number;
@@ -251,7 +252,7 @@ export default function SeasonSimulation() {
   const finalTimeout = useRef<number | null>(null);
 
   useEffect(() => {
-    axios.get('http://localhost:8000/api/bracket')
+    axios.get(`${API_BASE}/api/bracket`)
       .then(res => setConferences(res.data.conferences))
       .catch(() => setError('Failed to load bracket seeding. Ensure backend is running.'));
   }, []);

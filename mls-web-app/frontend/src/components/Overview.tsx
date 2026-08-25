@@ -5,6 +5,7 @@ import Crest from '../teams/Crest';
 import { getTeam } from '../teams/teamData';
 import { teamCssVars } from '../teams/colorUtils';
 import CountUp from './CountUp';
+import { API_BASE } from '../apiBase';
 
 interface PredictionRow {
   Team: string;
@@ -16,7 +17,7 @@ export default function Overview() {
   const [predictions, setPredictions] = useState<PredictionRow[]>([]);
 
   useEffect(() => {
-    axios.get('http://localhost:8000/api/season_predictions')
+    axios.get(`${API_BASE}/api/season_predictions`)
       .then(res => setPredictions(res.data.data))
       .catch(err => console.error('Error fetching season predictions', err));
   }, []);
