@@ -1,0 +1,303 @@
+import { useFrame } from '@react-three/fiber';
+import { useMemo, useRef, useEffect } from 'react';
+import * as THREE from 'three';
+import type { TeamIdentity } from '../teams/teamData';
+
+interface MatchSimProps {
+  homeTeam: TeamIdentity;
+  awayTeam: TeamIdentity;
+  prediction: { home: number; draw: number; away: number } | null;
+  playing: boolean;
+  onGoal?: (side: 'home' | 'away') => void;
+  onFinish?: () => void;
+}
+
+const SKIN_TONES = ['#e8b88a', '#c68a5e', '#8d5a3c', '#5c3a26'];
+
+const PITCH_W = 68 * 1.05;
+const PITCH_H = 105 * 1.05;
+
+// Base formation offsets (4-3-3-ish), relative to own half, x in [-1,1], z depth toward own goal
+const FORMATION: [number, number][] = [
+  [0, 0.92], // GK
+  [-0.65, 0.68], [-0.22, 0.72], [0.22, 0.72], [0.65, 0.68], // back 4
+  [-0.45, 0.42], [0, 0.45], [0.45, 0.42], // midfield 3
+  [-0.55, 0.15], [0, 0.1], [0.55, 0.15], // front 3
+];
+
+function makeFormationBase(side: 1 | -1) {
+  return FORMATION.map(([x, z]) => new THREE.Vector3(x * (PITCH_W / 2 - 3), 0, side * z * (PITCH_H / 2 - 2)));
+}
+
+interface PlayerHandle {
+  group: THREE.Group | null;
+}
+
+function Player({
+  innerRef,
+  color,
+  accent,
+  isGK,
+  skinTone,
+}: {
+  innerRef: (el: THREE.Group | null) => void;
+  color: string;
+  accent: string;
+  isGK: boolean;
+  skinTone: string;
+}) {
+  const jerseyColor = isGK ? '#f4d03f' : color;
+  const shortsColor = isGK ? '#1a1a1a' : accent;
+
+  return (
+    <group ref={innerRef}>
+      {/* shadow blob */}
+      <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.55, 16]} />
+        <meshBasicMaterial color="black" transparent opacity={0.3} />
+      </mesh>
+
+      {/* legs */}
+      <mesh position={[-0.16, 0.5, 0]} castShadow>
+        <capsuleGeometry args={[0.13, 0.75, 3, 6]} />
+        <meshStandardMaterial color="#e4c9a0" roughness={0.8} />
+      </mesh>
+      <mesh position={[0.16, 0.5, 0]} castShadow>
+        <capsuleGeometry args={[0.13, 0.75, 3, 6]} />
+        <meshStandardMaterial color="#e4c9a0" roughness={0.8} />
+      </mesh>
+
+      {/* shorts */}
+      <mesh position={[0, 0.92, 0]} castShadow>
+        <capsuleGeometry args={[0.36, 0.28, 3, 8]} />
+        <meshStandardMaterial color={shortsColor} roughness={0.65} />
+      </mesh>
+
+      {/* torso / jersey */}
+      <mesh position={[0, 1.42, 0]} castShadow>
+        <capsuleGeometry args={[0.32, 0.62, 4, 8]} />
+        <meshStandardMaterial color={jerseyColor} roughness={0.55} />
+      </mesh>
+      {/* jersey side stripe (accent trim) */}
+      <mesh position={[0, 1.42, 0.31]} castShadow>
+        <boxGeometry args={[0.08, 0.66, 0.06]} />
+        <meshStandardMaterial color={accent} roughness={0.5} />
+      </mesh>
+
+      {/* arms */}
+      <mesh position={[-0.42, 1.4, 0]} rotation={[0, 0, 0.18]} castShadow>
+        <capsuleGeometry args={[0.1, 0.5, 3, 6]} />
+        <meshStandardMaterial color={jerseyColor} roughness={0.55} />
+      </mesh>
+      <mesh position={[0.42, 1.4, 0]} rotation={[0, 0, -0.18]} castShadow>
+        <capsuleGeometry args={[0.1, 0.5, 3, 6]} />
+        <meshStandardMaterial color={jerseyColor} roughness={0.55} />
+      </mesh>
+
+      {/* head */}
+      <mesh position={[0, 2.02, 0]} castShadow>
+        <sphereGeometry args={[0.24, 14, 14]} />
+        <meshStandardMaterial color={skinTone} roughness={0.7} />
+      </mesh>
+    </group>
+  );
+}
+
+type Phase = 'idle' | 'buildup' | 'shot' | 'goal' | 'reset';
+
+export default function MatchSim({ homeTeam, awayTeam, prediction, playing, onGoal, onFinish }: MatchSimProps) {
+  const homeBase = useMemo(() => makeFormationBase(1), []);
+  const awayBase = useMemo(() => makeFormationBase(-1), []);
+
+  const ballRef = useRef<THREE.Mesh>(null);
+  const homeRefs = useRef<PlayerHandle[]>(homeBase.map(() => ({ group: null })));
+  const awayRefs = useRef<PlayerHandle[]>(awayBase.map(() => ({ group: null })));
+
+  // scratch vectors reused every frame to avoid GC churn
+  const scratchA = useMemo(() => new THREE.Vector3(), []);
+  const scratchB = useMemo(() => new THREE.Vector3(), []);
+
+  const clock = useRef(0);
+  const phase = useRef<Phase>('idle');
+  const target = useRef(new THREE.Vector3(0, 0, 0));
+  const outcome = useRef<'H' | 'D' | 'A' | null>(null);
+  const goalsScored = useRef(0);
+  const finished = useRef(false);
+  const willScore = useRef(false);
+  const attackingHomeRef = useRef(true);
+
+  useEffect(() => {
+    if (playing && prediction) {
+      clock.current = 0;
+      phase.current = 'buildup';
+      finished.current = false;
+      goalsScored.current = 0;
+      const r = Math.random() * 100;
+      if (r < prediction.home) outcome.current = 'H';
+      else if (r < prediction.home + prediction.draw) outcome.current = 'D';
+      else outcome.current = 'A';
+    } else {
+      phase.current = 'idle';
+    }
+  }, [playing, prediction]);
+
+  const applyFormation = (
+    refs: PlayerHandle[],
+    base: THREE.Vector3[],
+    pull: THREE.Vector3,
+    lerpAmt: number
+  ) => {
+    for (let i = 0; i < refs.length; i++) {
+      const g = refs[i].group;
+      if (!g) continue;
+      scratchA.copy(base[i]).add(pull);
+      g.position.lerp(scratchA, lerpAmt);
+    }
+  };
+
+  useFrame((state, delta) => {
+    const dt = Math.min(delta, 0.05);
+    clock.current += dt;
+
+    if (phase.current === 'idle') {
+      // gentle idle drift / breathing formation
+      const t = state.clock.elapsedTime;
+      for (let i = 0; i < homeRefs.current.length; i++) {
+        const g = homeRefs.current[i].group;
+        if (!g) continue;
+        scratchA.copy(homeBase[i]).add(scratchB.set(Math.sin(t * 0.5 + i) * 0.6, 0, Math.cos(t * 0.4 + i) * 0.4));
+        g.position.lerp(scratchA, 0.05);
+      }
+      for (let i = 0; i < awayRefs.current.length; i++) {
+        const g = awayRefs.current[i].group;
+        if (!g) continue;
+        scratchA.copy(awayBase[i]).add(scratchB.set(Math.sin(t * 0.5 + i + 3) * 0.6, 0, Math.cos(t * 0.4 + i + 3) * 0.4));
+        g.position.lerp(scratchA, 0.05);
+      }
+      if (ballRef.current) {
+        ballRef.current.position.lerp(scratchA.set(Math.sin(t * 0.3) * 3, 0.35, Math.cos(t * 0.3) * 2), 0.04);
+      }
+      return;
+    }
+
+    const t = clock.current;
+
+    if (phase.current === 'buildup') {
+      const attackingHome = outcome.current !== 'A';
+      attackingHomeRef.current = attackingHome;
+
+      const progress = Math.min(t / 3.2, 1);
+      const eased = 1 - Math.pow(1 - progress, 2);
+      const goalZ = attackingHome ? -(PITCH_H / 2 - 8) : (PITCH_H / 2 - 8);
+      const ballX = Math.sin(eased * Math.PI * 2) * 8 * (1 - eased * 0.5);
+      const ballZ = THREE.MathUtils.lerp(0, goalZ, eased);
+      if (ballRef.current) {
+        ballRef.current.position.lerp(
+          scratchA.set(ballX, 0.35 + Math.sin(eased * Math.PI) * 1.2, ballZ),
+          0.35
+        );
+      }
+
+      const homePull = attackingHome ? scratchB.set(ballX * 0.3, 0, ballZ * 0.4) : scratchB.set(0, 0, 0);
+      applyFormation(homeRefs.current, homeBase, homePull.clone(), 0.08);
+      const awayPull = !attackingHome ? scratchB.set(ballX * 0.3, 0, ballZ * 0.4) : scratchB.set(0, 0, 0);
+      applyFormation(awayRefs.current, awayBase, awayPull.clone(), 0.08);
+
+      if (progress >= 1) {
+        phase.current = 'shot';
+        clock.current = 0;
+        willScore.current = (attackingHome && outcome.current === 'H') || (!attackingHome && outcome.current === 'A') || (outcome.current === 'D' && Math.random() < 0.5);
+        target.current = willScore.current
+          ? new THREE.Vector3((Math.random() - 0.5) * 5, 1.2, attackingHome ? -(PITCH_H / 2 + 2) : (PITCH_H / 2 + 2))
+          : new THREE.Vector3((Math.random() - 0.5) * 3, 2.8, attackingHome ? -(PITCH_H / 2 - 14) : (PITCH_H / 2 - 14));
+      }
+      return;
+    }
+
+    if (phase.current === 'shot') {
+      const progress = Math.min(t / 0.9, 1);
+      const eased = progress * progress * (3 - 2 * progress); // smoothstep
+      const goalZ = attackingHomeRef.current ? -(PITCH_H / 2 - 8) : (PITCH_H / 2 - 8);
+      scratchA.set(0, 0.35, goalZ).lerp(target.current, eased);
+      scratchA.y = 0.35 + Math.sin(eased * Math.PI) * 1.5;
+      if (ballRef.current) ballRef.current.position.copy(scratchA);
+
+      if (progress >= 1) {
+        if (willScore.current) {
+          phase.current = 'goal';
+          clock.current = 0;
+          const side: 'home' | 'away' = attackingHomeRef.current ? 'home' : 'away';
+          goalsScored.current += 1;
+          onGoal?.(side);
+        } else {
+          phase.current = 'reset';
+          clock.current = 0;
+        }
+      }
+      return;
+    }
+
+    if (phase.current === 'goal') {
+      if (t > 1.6) {
+        phase.current = 'reset';
+        clock.current = 0;
+      }
+      return;
+    }
+
+    if (phase.current === 'reset') {
+      applyFormation(homeRefs.current, homeBase, scratchB.set(0, 0, 0), 0.12);
+      applyFormation(awayRefs.current, awayBase, scratchB.set(0, 0, 0), 0.12);
+      if (t > 0.6) {
+        if (goalsScored.current >= 1 && !finished.current) {
+          finished.current = true;
+          onFinish?.();
+          phase.current = 'idle';
+        } else {
+          phase.current = 'buildup';
+          clock.current = 0;
+        }
+      }
+      return;
+    }
+  });
+
+  return (
+    <group>
+      {homeBase.map((p, i) => (
+        <Player
+          key={`h-${i}`}
+          innerRef={(el) => { homeRefs.current[i].group = el; if (el) el.position.copy(p); }}
+          color={homeTeam.primary}
+          accent={homeTeam.secondary}
+          isGK={i === 0}
+          skinTone={SKIN_TONES[i % SKIN_TONES.length]}
+        />
+      ))}
+      {awayBase.map((p, i) => (
+        <Player
+          key={`a-${i}`}
+          innerRef={(el) => { awayRefs.current[i].group = el; if (el) el.position.copy(p); }}
+          color={awayTeam.primary}
+          accent={awayTeam.secondary}
+          isGK={i === 0}
+          skinTone={SKIN_TONES[(i + 2) % SKIN_TONES.length]}
+        />
+      ))}
+      <mesh ref={ballRef} position={[0, 0.35, 0]} castShadow>
+        <sphereGeometry args={[0.35, 16, 16]} />
+        <meshStandardMaterial color="#f5f5f0" roughness={0.4} />
+      </mesh>
+
+      {/* goals */}
+      {[1, -1].map(side => (
+        <group key={side} position={[0, 0, side * (PITCH_H / 2 - 8)]}>
+          <mesh position={[0, 1.2, side * 6]}>
+            <boxGeometry args={[7.32, 2.44, 0.15]} />
+            <meshStandardMaterial color="white" wireframe />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
