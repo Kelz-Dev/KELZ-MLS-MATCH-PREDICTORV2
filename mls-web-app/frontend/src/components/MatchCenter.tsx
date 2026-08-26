@@ -9,10 +9,11 @@ import Crest from '../teams/Crest';
 import { getTeam } from '../teams/teamData';
 import { teamCssVars } from '../teams/colorUtils';
 import { API_BASE } from '../apiBase';
-import { simulateBatch } from '../three/scoreline';
 
 type Prediction = { home: number; draw: number; away: number };
-type BatchResult = { homeWins: number; draws: number; awayWins: number; n: number };
+
+const TOURNAMENT_SIZE = 10;
+type TournamentMatchResult = 'home' | 'draw' | 'away';
 
 export default function MatchCenter() {
   const [teams, setTeams] = useState<string[]>([]);
@@ -27,8 +28,15 @@ export default function MatchCenter() {
   const [score, setScore] = useState({ home: 0, away: 0 });
   const [matchDone, setMatchDone] = useState(false);
   const [flash, setFlash] = useState(false);
-  const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
   const goalTimeout = useRef<number | null>(null);
+
+  // Tournament mode: replays TOURNAMENT_SIZE quick matches back-to-back on
+  // the same pitch, tracking a running tally shown in a corner overlay.
+  const [tournamentActive, setTournamentActive] = useState(false);
+  const [tournamentResults, setTournamentResults] = useState<TournamentMatchResult[]>([]);
+  const [tournamentDone, setTournamentDone] = useState(false);
+  const tournamentActiveRef = useRef(false);
+  const nextMatchTimeout = useRef<number | null>(null);
 
   useEffect(() => {
     axios.get(`${API_BASE}/api/teams`)
@@ -48,7 +56,10 @@ export default function MatchCenter() {
     setPrediction(null);
     setMatchDone(false);
     setScore({ home: 0, away: 0 });
-    setBatchResult(null);
+    setTournamentActive(false);
+    tournamentActiveRef.current = false;
+    setTournamentResults([]);
+    setTournamentDone(false);
     try {
       const res = await axios.post(`${API_BASE}/api/predict_match`, {
         home_team: homeTeam,
@@ -63,13 +74,23 @@ export default function MatchCenter() {
     }
   };
 
-  const runBatchSample = () => {
-    if (!prediction) return;
-    setBatchResult(simulateBatch(prediction.home, prediction.draw, prediction.away, 10));
-  };
-
   const kickoff = () => {
     if (!prediction) return;
+    tournamentActiveRef.current = false;
+    setTournamentActive(false);
+    setScore({ home: 0, away: 0 });
+    setMatchDone(false);
+    setCameraMode('match');
+    setPlaying(true);
+  };
+
+  const startTournament = () => {
+    if (!prediction) return;
+    if (nextMatchTimeout.current) window.clearTimeout(nextMatchTimeout.current);
+    tournamentActiveRef.current = true;
+    setTournamentActive(true);
+    setTournamentDone(false);
+    setTournamentResults([]);
     setScore({ home: 0, away: 0 });
     setMatchDone(false);
     setCameraMode('match');
@@ -82,14 +103,56 @@ export default function MatchCenter() {
     setFlash(true);
     setTimeout(() => setFlash(false), 250);
     if (goalTimeout.current) window.clearTimeout(goalTimeout.current);
-    goalTimeout.current = window.setTimeout(() => setCameraMode('match'), 1800);
+    goalTimeout.current = window.setTimeout(() => setCameraMode('match'), tournamentActiveRef.current ? 500 : 1800);
   };
 
   const handleFinish = () => {
     setPlaying(false);
-    setMatchDone(true);
     setCameraMode('idle');
+
+    if (tournamentActiveRef.current) {
+      setScore(current => {
+        const result: TournamentMatchResult = current.home > current.away ? 'home' : current.home < current.away ? 'away' : 'draw';
+        setTournamentResults(prev => {
+          const next = [...prev, result];
+          if (next.length >= TOURNAMENT_SIZE) {
+            tournamentActiveRef.current = false;
+            setTournamentActive(false);
+            setTournamentDone(true);
+            setMatchDone(true);
+          } else {
+            // Brief pause on the final score before the next kickoff.
+            nextMatchTimeout.current = window.setTimeout(() => {
+              setScore({ home: 0, away: 0 });
+              setCameraMode('match');
+              setPlaying(true);
+            }, 600);
+          }
+          return next;
+        });
+        return current;
+      });
+    } else {
+      setMatchDone(true);
+    }
   };
+
+  useEffect(() => {
+    return () => {
+      if (nextMatchTimeout.current) window.clearTimeout(nextMatchTimeout.current);
+      if (goalTimeout.current) window.clearTimeout(goalTimeout.current);
+    };
+  }, []);
+
+  const tournamentTally = tournamentResults.reduce(
+    (acc, r) => {
+      if (r === 'home') acc.home += 1;
+      else if (r === 'away') acc.away += 1;
+      else acc.draw += 1;
+      return acc;
+    },
+    { home: 0, draw: 0, away: 0 }
+  );
 
   const home = getTeam(homeTeam);
   const away = getTeam(awayTeam);
@@ -116,6 +179,7 @@ export default function MatchCenter() {
                 awayTeam={away}
                 prediction={prediction}
                 playing={playing}
+                fast={tournamentActive}
                 onGoal={handleGoal}
                 onFinish={handleFinish}
               />
@@ -145,8 +209,53 @@ export default function MatchCenter() {
           </div>
         )}
 
-        {matchDone && (
-          <div className="fulltime-badge">FULL TIME</div>
+        {matchDone && !tournamentActive && (
+          <div className="fulltime-badge">
+            {tournamentDone ? '10-MATCH SAMPLE COMPLETE' : 'FULL TIME'}
+          </div>
+        )}
+
+        {(tournamentActive || tournamentResults.length > 0) && (
+          <div className="tournament-tally" style={teamCssVars(home)}>
+            <div className="tournament-tally-header">
+              <span className="tournament-tally-title">10-Match Sample</span>
+              <span className="tournament-tally-progress">
+                {tournamentDone ? 'Complete' : `Match ${Math.min(tournamentResults.length + 1, TOURNAMENT_SIZE)} / ${TOURNAMENT_SIZE}`}
+              </span>
+            </div>
+
+            <div className="tournament-tally-rows">
+              <div className="tournament-tally-row">
+                <Crest team={home} size={20} />
+                <span className="tournament-tally-name">{home.abbr}</span>
+                <span className="tournament-tally-count" style={{ color: home.primary }}>{tournamentTally.home}</span>
+              </div>
+              <div className="tournament-tally-row">
+                <span className="tournament-tally-draw-icon">=</span>
+                <span className="tournament-tally-name">Draw</span>
+                <span className="tournament-tally-count">{tournamentTally.draw}</span>
+              </div>
+              <div className="tournament-tally-row">
+                <Crest team={away} size={20} />
+                <span className="tournament-tally-name">{away.abbr}</span>
+                <span className="tournament-tally-count" style={{ color: away.primary }}>{tournamentTally.away}</span>
+              </div>
+            </div>
+
+            <div className="tournament-tally-dots">
+              {Array.from({ length: TOURNAMENT_SIZE }).map((_, i) => {
+                const result = tournamentResults[i];
+                const dotColor = result === 'home' ? home.primary : result === 'away' ? away.primary : result === 'draw' ? 'var(--text-2)' : undefined;
+                return (
+                  <span
+                    key={i}
+                    className={`tournament-dot ${result ? 'filled' : ''}`}
+                    style={dotColor ? { background: dotColor } : undefined}
+                  />
+                );
+              })}
+            </div>
+          </div>
         )}
       </div>
 
@@ -201,8 +310,17 @@ export default function MatchCenter() {
             {loading ? 'Predicting…' : 'Get Prediction'}
           </button>
           {prediction && (
-            <button className="btn btn-kickoff" onClick={kickoff} disabled={playing}>
-              {playing ? 'Match in progress…' : matchDone ? 'Replay Kickoff' : 'Kick Off ⚽'}
+            <button className="btn btn-kickoff" onClick={kickoff} disabled={playing || tournamentActive}>
+              {playing && !tournamentActive ? 'Match in progress…' : matchDone && !tournamentActive ? 'Replay Kickoff' : 'Kick Off ⚽'}
+            </button>
+          )}
+          {prediction && (
+            <button className="btn btn-ghost" onClick={startTournament} disabled={(playing && !tournamentActive) || tournamentActive}>
+              {tournamentActive
+                ? `Simulating ${Math.min(tournamentResults.length + 1, TOURNAMENT_SIZE)}/${TOURNAMENT_SIZE}…`
+                : tournamentDone
+                  ? 'Re-run 10-Match Sample'
+                  : 'Simulate 10 Matches 🔁'}
             </button>
           )}
         </div>
@@ -227,65 +345,11 @@ export default function MatchCenter() {
               <span>{away.abbr} Win</span>
             </div>
 
-            <div className="batch-sim">
-              <div className="batch-sim-header">
-                <h3>10-Match Sample</h3>
-                <button className="btn-ghost btn-sm" onClick={runBatchSample}>
-                  {batchResult ? 'Re-run Sample' : 'Simulate 10 Matches'}
-                </button>
-              </div>
-              <p className="batch-sim-hint">
-                A single match is a coin toss even for a heavy favorite. Running a batch shows the model's edge over a bigger sample.
+            {tournamentResults.length > 0 && (
+              <p className="batch-sim-hint" style={{ marginTop: '1rem' }}>
+                Watch the top-left of the pitch above — the sample tally updates live as each match plays out.
               </p>
-
-              {batchResult && (
-                <div className="batch-sim-results">
-                  <div className="batch-compare-row">
-                    <span className="batch-compare-label">{home.abbr} wins</span>
-                    <div className="batch-compare-track">
-                      <div
-                        className="batch-compare-fill predicted"
-                        style={{ width: `${prediction.home}%`, background: home.primary }}
-                      />
-                      <div
-                        className="batch-compare-fill sampled"
-                        style={{ width: `${(batchResult.homeWins / batchResult.n) * 100}%`, background: home.primary }}
-                      />
-                    </div>
-                    <span className="batch-compare-count">{batchResult.homeWins}/{batchResult.n}</span>
-                  </div>
-                  <div className="batch-compare-row">
-                    <span className="batch-compare-label">Draws</span>
-                    <div className="batch-compare-track">
-                      <div className="batch-compare-fill predicted" style={{ width: `${prediction.draw}%` }} />
-                      <div
-                        className="batch-compare-fill sampled"
-                        style={{ width: `${(batchResult.draws / batchResult.n) * 100}%` }}
-                      />
-                    </div>
-                    <span className="batch-compare-count">{batchResult.draws}/{batchResult.n}</span>
-                  </div>
-                  <div className="batch-compare-row">
-                    <span className="batch-compare-label">{away.abbr} wins</span>
-                    <div className="batch-compare-track">
-                      <div
-                        className="batch-compare-fill predicted"
-                        style={{ width: `${prediction.away}%`, background: away.primary }}
-                      />
-                      <div
-                        className="batch-compare-fill sampled"
-                        style={{ width: `${(batchResult.awayWins / batchResult.n) * 100}%`, background: away.primary }}
-                      />
-                    </div>
-                    <span className="batch-compare-count">{batchResult.awayWins}/{batchResult.n}</span>
-                  </div>
-                  <div className="batch-compare-legend">
-                    <span><span className="swatch swatch-predicted" /> Model %</span>
-                    <span><span className="swatch swatch-sampled" /> Sample result</span>
-                  </div>
-                </div>
-              )}
-            </div>
+            )}
           </div>
         )}
       </div>

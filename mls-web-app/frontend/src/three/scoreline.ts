@@ -44,17 +44,3 @@ export function rollScoreline(home: number, draw: number, _away: number): Scorel
     ? { outcome, home: winner, away: loser }
     : { outcome, home: loser, away: winner };
 }
-
-// Fast, non-animated batch of N match rolls for the sample-size stats panel.
-export function simulateBatch(home: number, draw: number, away: number, n: number) {
-  let homeWins = 0;
-  let draws = 0;
-  let awayWins = 0;
-  for (let i = 0; i < n; i++) {
-    const s = rollScoreline(home, draw, away);
-    if (s.outcome === 'H') homeWins++;
-    else if (s.outcome === 'D') draws++;
-    else awayWins++;
-  }
-  return { homeWins, draws, awayWins, n };
-}

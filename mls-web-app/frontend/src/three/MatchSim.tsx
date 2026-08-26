@@ -9,6 +9,10 @@ interface MatchSimProps {
   awayTeam: TeamIdentity;
   prediction: { home: number; draw: number; away: number } | null;
   playing: boolean;
+  /** Highlight-reel pace for tournament mode — compresses buildup, shot, and
+   *  goal-celebration timing (~5x) so a full match takes a few seconds
+   *  instead of 20-40s, while still visibly playing out on the pitch. */
+  fast?: boolean;
   onGoal?: (side: 'home' | 'away') => void;
   onFinish?: () => void;
 }
@@ -123,7 +127,13 @@ function TeamSideMarker({ color, side }: { color: string; side: 1 | -1 }) {
 
 type Phase = 'idle' | 'buildup' | 'shot' | 'goal' | 'reset';
 
-export default function MatchSim({ homeTeam, awayTeam, prediction, playing, onGoal, onFinish }: MatchSimProps) {
+export default function MatchSim({ homeTeam, awayTeam, prediction, playing, fast = false, onGoal, onFinish }: MatchSimProps) {
+  const speed = fast ? 5 : 1;
+  const buildupDuration = 3.2 / speed;
+  const shotDuration = 0.9 / speed;
+  const goalCelebrationDuration = 1.6 / speed;
+  const resetDuration = 0.6 / speed;
+
   const homeBase = useMemo(() => makeFormationBase(1), []);
   const awayBase = useMemo(() => makeFormationBase(-1), []);
 
@@ -236,7 +246,7 @@ export default function MatchSim({ homeTeam, awayTeam, prediction, playing, onGo
       }
 
       const attackingHome = attackingHomeRef.current;
-      const progress = Math.min(t / 3.2, 1);
+      const progress = Math.min(t / buildupDuration, 1);
       const eased = 1 - Math.pow(1 - progress, 2);
       const goalZ = attackingHome ? -(PITCH_H / 2 - 8) : (PITCH_H / 2 - 8);
       const ballX = Math.sin(eased * Math.PI * 2) * 8 * (1 - eased * 0.5);
@@ -264,7 +274,7 @@ export default function MatchSim({ homeTeam, awayTeam, prediction, playing, onGo
     }
 
     if (phase.current === 'shot') {
-      const progress = Math.min(t / 0.9, 1);
+      const progress = Math.min(t / shotDuration, 1);
       const eased = progress * progress * (3 - 2 * progress); // smoothstep
       const goalZ = attackingHomeRef.current ? -(PITCH_H / 2 - 8) : (PITCH_H / 2 - 8);
       scratchA.set(0, 0.35, goalZ).lerp(target.current, eased);
@@ -287,7 +297,7 @@ export default function MatchSim({ homeTeam, awayTeam, prediction, playing, onGo
     }
 
     if (phase.current === 'goal') {
-      if (t > 1.6) {
+      if (t > goalCelebrationDuration) {
         phase.current = 'reset';
         clock.current = 0;
       }
@@ -297,7 +307,7 @@ export default function MatchSim({ homeTeam, awayTeam, prediction, playing, onGo
     if (phase.current === 'reset') {
       applyFormation(homeRefs.current, homeBase, scratchB.set(0, 0, 0), 0.12);
       applyFormation(awayRefs.current, awayBase, scratchB.set(0, 0, 0), 0.12);
-      if (t > 0.6) {
+      if (t > resetDuration) {
         possessionIndex.current += 1;
         const allGoalsPlayed = goalIndex.current >= goalQueue.current.length;
         const enoughPossessions = possessionIndex.current >= possessionsTotal.current;
