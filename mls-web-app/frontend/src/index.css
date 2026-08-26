@@ -1135,9 +1135,12 @@ tr:hover .team-cell img,
 }
 
 /* ============ On-pitch 10-match tournament tally ============ */
+/* Anchored bottom-left, well clear of the centered top scoreboard's
+   horizontal band, so the two overlays can never collide regardless of
+   how wide the scoreboard grows with longer team names. */
 .tournament-tally {
   position: absolute;
-  top: clamp(0.6rem, 3vw, 1.25rem);
+  bottom: clamp(0.6rem, 3vw, 1.25rem);
   left: clamp(0.6rem, 3vw, 1.25rem);
   display: flex;
   flex-direction: column;
@@ -1151,6 +1154,7 @@ tr:hover .team-cell img,
   min-width: 190px;
   max-width: calc(50% - 1.5rem);
   animation: riseIn 0.4s var(--ease-out) both;
+  z-index: 2;
 }
 
 .tournament-tally-header {
