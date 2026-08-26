@@ -29,3 +29,9 @@ npm-debug.log*
 # Secrets
 .env
 .env.local
+
+# Vercel CLI project links
+.vercel/
+
+# Raw source logo dump (renamed copies live in mls-web-app/frontend/public/crests)
+mls-web-app/frontend/MLS-LOGOS/

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { TeamIdentity } from './teamData';
 
 interface CrestProps {
@@ -14,7 +15,7 @@ const SHAPES: Record<TeamIdentity['shape'], string> = {
   hex: 'M50 3 L93 26.5 L93 73.5 L50 97 L7 73.5 L7 26.5 Z',
 };
 
-export default function Crest({ team, size = 64, animated = false, className }: CrestProps) {
+function ProceduralBadge({ team, size, animated, className }: Required<Pick<CrestProps, 'team' | 'size' | 'animated'>> & { className?: string }) {
   const gradId = `grad-${team.abbr}`;
   const clipId = `clip-${team.abbr}`;
   const glowId = `glow-${team.abbr}`;
@@ -76,4 +77,27 @@ export default function Crest({ team, size = 64, animated = false, className }: 
       </text>
     </svg>
   );
+}
+
+export default function Crest({ team, size = 64, animated = false, className }: CrestProps) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  if (team.logoSlug && !imageFailed) {
+    return (
+      <img
+        src={`/crests/${team.logoSlug}.png`}
+        alt={`${team.name} crest`}
+        width={size}
+        height={size}
+        className={className}
+        style={{
+          objectFit: 'contain',
+          filter: animated ? `drop-shadow(0 0 ${size * 0.12}px ${team.primary}66)` : undefined,
+        }}
+        onError={() => setImageFailed(true)}
+      />
+    );
+  }
+
+  return <ProceduralBadge team={team} size={size} animated={animated} className={className} />;
 }
