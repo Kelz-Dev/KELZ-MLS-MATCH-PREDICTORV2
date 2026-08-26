@@ -1151,17 +1151,22 @@ tr:hover .team-cell img,
   border-radius: var(--radius-md);
   padding: 0.85rem 1rem;
   box-shadow: var(--shadow-md);
+  width: max-content;
   min-width: 190px;
-  max-width: calc(50% - 1.5rem);
+  max-width: calc(100% - 1.5rem);
+  overflow: hidden;
   animation: riseIn 0.4s var(--ease-out) both;
   z-index: 2;
+  box-sizing: border-box;
 }
 
 .tournament-tally-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.6rem;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.6rem;
+  min-width: 0;
 }
 
 .tournament-tally-title {
@@ -1172,6 +1177,8 @@ tr:hover .team-cell img,
   text-transform: uppercase;
   color: var(--text-2);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tournament-tally-progress {
@@ -1180,6 +1187,7 @@ tr:hover .team-cell img,
   font-weight: 700;
   color: var(--electric-purple);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .tournament-tally-rows {
