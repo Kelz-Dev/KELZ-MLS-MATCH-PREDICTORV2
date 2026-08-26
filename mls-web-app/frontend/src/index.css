@@ -717,12 +717,16 @@ label {
   gap: 0.85rem;
 }
 
-.team-cell svg {
+.team-cell svg,
+.team-cell img {
+  object-fit: contain;
   transition: transform 0.35s var(--ease-spring);
 }
 
 tr:hover .team-cell svg,
-.bracket-team:hover svg {
+tr:hover .team-cell img,
+.bracket-team:hover svg,
+.bracket-team:hover img {
   transform: rotate(-8deg) scale(1.12);
 }
 
@@ -734,7 +738,8 @@ tr:hover .team-cell svg,
   .team-cell {
     gap: 0.6rem;
   }
-  .team-cell svg {
+  .team-cell svg,
+  .team-cell img {
     width: 24px;
     height: 24px;
   }
@@ -1202,10 +1207,12 @@ tr:hover .team-cell svg,
   white-space: nowrap;
 }
 
-.scoreboard-team svg {
+.scoreboard-team svg,
+.scoreboard-team img {
   width: clamp(22px, 6vw, 36px);
   height: clamp(22px, 6vw, 36px);
   flex-shrink: 0;
+  object-fit: contain;
 }
 
 .scoreboard-score {
@@ -1277,10 +1284,12 @@ tr:hover .team-cell svg,
   max-width: calc(100% - 1.5rem);
 }
 
-.champion-banner svg {
+.champion-banner svg,
+.champion-banner img {
   width: clamp(40px, 12vw, 72px);
   height: clamp(40px, 12vw, 72px);
   flex-shrink: 0;
+  object-fit: contain;
 }
 
 .champion-label {
