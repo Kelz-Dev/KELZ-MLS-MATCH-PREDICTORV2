@@ -9,8 +9,10 @@ import Crest from '../teams/Crest';
 import { getTeam } from '../teams/teamData';
 import { teamCssVars } from '../teams/colorUtils';
 import { API_BASE } from '../apiBase';
+import { simulateBatch } from '../three/scoreline';
 
 type Prediction = { home: number; draw: number; away: number };
+type BatchResult = { homeWins: number; draws: number; awayWins: number; n: number };
 
 export default function MatchCenter() {
   const [teams, setTeams] = useState<string[]>([]);
@@ -25,6 +27,7 @@ export default function MatchCenter() {
   const [score, setScore] = useState({ home: 0, away: 0 });
   const [matchDone, setMatchDone] = useState(false);
   const [flash, setFlash] = useState(false);
+  const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
   const goalTimeout = useRef<number | null>(null);
 
   useEffect(() => {
@@ -45,6 +48,7 @@ export default function MatchCenter() {
     setPrediction(null);
     setMatchDone(false);
     setScore({ home: 0, away: 0 });
+    setBatchResult(null);
     try {
       const res = await axios.post(`${API_BASE}/api/predict_match`, {
         home_team: homeTeam,
@@ -57,6 +61,11 @@ export default function MatchCenter() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const runBatchSample = () => {
+    if (!prediction) return;
+    setBatchResult(simulateBatch(prediction.home, prediction.draw, prediction.away, 10));
   };
 
   const kickoff = () => {
@@ -216,6 +225,66 @@ export default function MatchCenter() {
               <span>{home.abbr} Win</span>
               <span>Draw</span>
               <span>{away.abbr} Win</span>
+            </div>
+
+            <div className="batch-sim">
+              <div className="batch-sim-header">
+                <h3>10-Match Sample</h3>
+                <button className="btn-ghost btn-sm" onClick={runBatchSample}>
+                  {batchResult ? 'Re-run Sample' : 'Simulate 10 Matches'}
+                </button>
+              </div>
+              <p className="batch-sim-hint">
+                A single match is a coin toss even for a heavy favorite. Running a batch shows the model's edge over a bigger sample.
+              </p>
+
+              {batchResult && (
+                <div className="batch-sim-results">
+                  <div className="batch-compare-row">
+                    <span className="batch-compare-label">{home.abbr} wins</span>
+                    <div className="batch-compare-track">
+                      <div
+                        className="batch-compare-fill predicted"
+                        style={{ width: `${prediction.home}%`, background: home.primary }}
+                      />
+                      <div
+                        className="batch-compare-fill sampled"
+                        style={{ width: `${(batchResult.homeWins / batchResult.n) * 100}%`, background: home.primary }}
+                      />
+                    </div>
+                    <span className="batch-compare-count">{batchResult.homeWins}/{batchResult.n}</span>
+                  </div>
+                  <div className="batch-compare-row">
+                    <span className="batch-compare-label">Draws</span>
+                    <div className="batch-compare-track">
+                      <div className="batch-compare-fill predicted" style={{ width: `${prediction.draw}%` }} />
+                      <div
+                        className="batch-compare-fill sampled"
+                        style={{ width: `${(batchResult.draws / batchResult.n) * 100}%` }}
+                      />
+                    </div>
+                    <span className="batch-compare-count">{batchResult.draws}/{batchResult.n}</span>
+                  </div>
+                  <div className="batch-compare-row">
+                    <span className="batch-compare-label">{away.abbr} wins</span>
+                    <div className="batch-compare-track">
+                      <div
+                        className="batch-compare-fill predicted"
+                        style={{ width: `${prediction.away}%`, background: away.primary }}
+                      />
+                      <div
+                        className="batch-compare-fill sampled"
+                        style={{ width: `${(batchResult.awayWins / batchResult.n) * 100}%`, background: away.primary }}
+                      />
+                    </div>
+                    <span className="batch-compare-count">{batchResult.awayWins}/{batchResult.n}</span>
+                  </div>
+                  <div className="batch-compare-legend">
+                    <span><span className="swatch swatch-predicted" /> Model %</span>
+                    <span><span className="swatch swatch-sampled" /> Sample result</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

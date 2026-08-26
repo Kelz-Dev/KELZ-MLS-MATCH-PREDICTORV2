@@ -2,6 +2,7 @@ import { useFrame } from '@react-three/fiber';
 import { useMemo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import type { TeamIdentity } from '../teams/teamData';
+import { rollScoreline } from './scoreline';
 
 interface MatchSimProps {
   homeTeam: TeamIdentity;
@@ -103,6 +104,23 @@ function Player({
   );
 }
 
+// Permanent color-coded marker behind each goal so a viewer can tell which
+// end belongs to which team from any camera angle, independent of jersey
+// color recognition — a flat ring tinted in the team's primary color plus
+// a soft ground glow.
+function TeamSideMarker({ color, side }: { color: string; side: 1 | -1 }) {
+  const z = side * (PITCH_H / 2 + 3);
+  return (
+    <group position={[0, 0.03, z]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[3.2, 3.6, 32]} />
+        <meshBasicMaterial color={color} transparent opacity={0.85} />
+      </mesh>
+      <pointLight position={[0, 3, 0]} color={color} intensity={40} distance={22} decay={2} />
+    </group>
+  );
+}
+
 type Phase = 'idle' | 'buildup' | 'shot' | 'goal' | 'reset';
 
 export default function MatchSim({ homeTeam, awayTeam, prediction, playing, onGoal, onFinish }: MatchSimProps) {
@@ -120,8 +138,15 @@ export default function MatchSim({ homeTeam, awayTeam, prediction, playing, onGo
   const clock = useRef(0);
   const phase = useRef<Phase>('idle');
   const target = useRef(new THREE.Vector3(0, 0, 0));
-  const outcome = useRef<'H' | 'D' | 'A' | null>(null);
-  const goalsScored = useRef(0);
+  // Full queue of goal-scorers for this match (e.g. ['home','home','away'] for
+  // a 2-1 win) instead of a single outcome — lets the animated kickoff play
+  // out a believable scoreline rather than always stopping after one goal.
+  const goalQueue = useRef<('home' | 'away')[]>([]);
+  const goalIndex = useRef(0);
+  // How many attacking sequences to actually play (goals + a couple of
+  // near-misses so a 0-0 draw isn't a completely empty animation).
+  const possessionsTotal = useRef(0);
+  const possessionIndex = useRef(0);
   const finished = useRef(false);
   const willScore = useRef(false);
   const attackingHomeRef = useRef(true);
@@ -131,11 +156,22 @@ export default function MatchSim({ homeTeam, awayTeam, prediction, playing, onGo
       clock.current = 0;
       phase.current = 'buildup';
       finished.current = false;
-      goalsScored.current = 0;
-      const r = Math.random() * 100;
-      if (r < prediction.home) outcome.current = 'H';
-      else if (r < prediction.home + prediction.draw) outcome.current = 'D';
-      else outcome.current = 'A';
+      goalIndex.current = 0;
+      possessionIndex.current = 0;
+
+      const scoreline = rollScoreline(prediction.home, prediction.draw, prediction.away);
+      const queue: ('home' | 'away')[] = [];
+      for (let i = 0; i < scoreline.home; i++) queue.push('home');
+      for (let i = 0; i < scoreline.away; i++) queue.push('away');
+      // Shuffle so goals don't always play out "all home goals then all away"
+      for (let i = queue.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [queue[i], queue[j]] = [queue[j], queue[i]];
+      }
+      goalQueue.current = queue;
+      // Every match plays at least 2 attacking sequences so a 0-0 draw still
+      // shows a couple of near-misses instead of an instantly-finished sim.
+      possessionsTotal.current = Math.max(queue.length, 2);
     } else {
       phase.current = 'idle';
     }
@@ -182,10 +218,24 @@ export default function MatchSim({ homeTeam, awayTeam, prediction, playing, onGo
 
     const t = clock.current;
 
+    // Whether this possession will score is decided once, at the start of
+    // 'buildup', by whether there's a goal left in the queue for the side
+    // taking this possession — not by a fresh coinflip each time.
     if (phase.current === 'buildup') {
-      const attackingHome = outcome.current !== 'A';
-      attackingHomeRef.current = attackingHome;
+      if (t <= dt) {
+        // First frame of this possession: assign attacking side + outcome.
+        const nextGoal = goalIndex.current < goalQueue.current.length ? goalQueue.current[goalIndex.current] : null;
+        if (nextGoal) {
+          attackingHomeRef.current = nextGoal === 'home';
+          willScore.current = true;
+        } else {
+          // Filler near-miss possession: alternate sides for visual variety.
+          attackingHomeRef.current = possessionIndex.current % 2 === 0;
+          willScore.current = false;
+        }
+      }
 
+      const attackingHome = attackingHomeRef.current;
       const progress = Math.min(t / 3.2, 1);
       const eased = 1 - Math.pow(1 - progress, 2);
       const goalZ = attackingHome ? -(PITCH_H / 2 - 8) : (PITCH_H / 2 - 8);
@@ -206,7 +256,6 @@ export default function MatchSim({ homeTeam, awayTeam, prediction, playing, onGo
       if (progress >= 1) {
         phase.current = 'shot';
         clock.current = 0;
-        willScore.current = (attackingHome && outcome.current === 'H') || (!attackingHome && outcome.current === 'A') || (outcome.current === 'D' && Math.random() < 0.5);
         target.current = willScore.current
           ? new THREE.Vector3((Math.random() - 0.5) * 5, 1.2, attackingHome ? -(PITCH_H / 2 + 2) : (PITCH_H / 2 + 2))
           : new THREE.Vector3((Math.random() - 0.5) * 3, 2.8, attackingHome ? -(PITCH_H / 2 - 14) : (PITCH_H / 2 - 14));
@@ -227,7 +276,7 @@ export default function MatchSim({ homeTeam, awayTeam, prediction, playing, onGo
           phase.current = 'goal';
           clock.current = 0;
           const side: 'home' | 'away' = attackingHomeRef.current ? 'home' : 'away';
-          goalsScored.current += 1;
+          goalIndex.current += 1;
           onGoal?.(side);
         } else {
           phase.current = 'reset';
@@ -249,7 +298,10 @@ export default function MatchSim({ homeTeam, awayTeam, prediction, playing, onGo
       applyFormation(homeRefs.current, homeBase, scratchB.set(0, 0, 0), 0.12);
       applyFormation(awayRefs.current, awayBase, scratchB.set(0, 0, 0), 0.12);
       if (t > 0.6) {
-        if (goalsScored.current >= 1 && !finished.current) {
+        possessionIndex.current += 1;
+        const allGoalsPlayed = goalIndex.current >= goalQueue.current.length;
+        const enoughPossessions = possessionIndex.current >= possessionsTotal.current;
+        if (allGoalsPlayed && enoughPossessions && !finished.current) {
           finished.current = true;
           onFinish?.();
           phase.current = 'idle';
@@ -288,6 +340,9 @@ export default function MatchSim({ homeTeam, awayTeam, prediction, playing, onGo
         <sphereGeometry args={[0.35, 16, 16]} />
         <meshStandardMaterial color="#f5f5f0" roughness={0.4} />
       </mesh>
+
+      <TeamSideMarker color={homeTeam.primary} side={1} />
+      <TeamSideMarker color={awayTeam.primary} side={-1} />
 
       {/* goals */}
       {[1, -1].map(side => (
